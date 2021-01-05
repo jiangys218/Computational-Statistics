@@ -1,0 +1,456 @@
+---
+title: "Stats 102A (Computational Statistics) - Homework 6"
+author: "Yunshuang Jiang"
+date: 
+output: html_document
+---
+
+_Modify this file with your answers and responses. Please preserve all text that is italicized._
+
+_You are encouraged to collaborate with your classmates, however, you are responsible for your own work. Please do not ask people outside of this class for help with this assignment._
+
+### Reading
+
+a.  Comparing Groups - Chapters 6, 7, 8, and 9 (skip 9.7 and 9.9)
+
+b. Science Isn't Broken -  http://fivethirtyeight.com/features/science-isnt-broken
+
+c. ASA's 2016 statement on Statistical Significance and P-Values
+
+http://amstat.tandfonline.com/doi/pdf/10.1080/00031305.2016.1154108?needAccess=true
+
+
+## Exercises
+
+### Bootstrap
+
+As we saw, there are parametric and nonparametric bootstrap methods. Parametric bootstrap methods assume that the population follows some specified distribution. For parametric bootstrap methods to produce reasonable results, the parametric distribution that is used to model the population must be correct.
+
+Nonparametric bootstrap methods do not specify the distribution. In these scenarios, the sample provides the only information we have about the population. We can use the sample as a pseudo-population by resampling it, and thus we can quantities like the standard error.
+
+### Worked Example
+
+Install and load the package "bootstrap".
+
+Inside the package bootstrap, there are two data sets of interest to us: `law` and `law82`. The data set `law82` contains LSAT scores and GPAs of students admitted to law school in the universe of 82 law schools. The data set `law` is a sample of 15 of these schools. (Curiously, the GPAs get multiplied by 100 in `law`)
+
+By having the population and a sample, we can see how the bootstrap behaves. 
+
+We can see the true value of the correlation between LSAT and GPA in the population.
+
+```{r, error = TRUE}
+library(bootstrap)
+cor(law82$LSAT, law82$GPA)
+```
+
+Now we will take a look at the sample, and a sample of our own making.
+
+```{r, error = TRUE}
+cor(law$LSAT, law$GPA)  #law has only 15 values compares to law82 has 82 values
+set.seed(1)
+law_samp1 <- law82[sample(1:82,15), 2:3]  #subset based on some randomly selected rows
+cor(law_samp1$LSAT, law_samp1$GPA)
+set.seed(2)
+law_samp2 <- law82[sample(1:82,15), 2:3]
+cor(law_samp2$LSAT, law_samp2$GPA)
+set.seed(10)
+law_samp10 <- law82[sample(1:82,15), 2:3]
+cor(law_samp10$LSAT, law_samp10$GPA)
+```
+We can see that the correlation between LSAT and GPA can depend heavily on the sample selected from the population. law_samp1 has a correlation of about 0.95, law_samp2 has r = 0.63, and law_samp3 has r = 0.82.
+
+We can use bootstrap to get an estimate of the standard error of the correlation statistic. And thus by having the standard error, we can perform further statistical inference.
+
+To perform the bootstrap, we will take a look at the `law` data set, which is a sample of 15 taken from the population of 82. We will use this as our pseudo population, by resampling with replacement.
+
+```{r}
+# manual bootstrap
+B <- 500  # number of replications
+n <- nrow(law)  # sample size
+results <- rep(NA, B)
+
+set.seed(1)
+for(i in 1:B){
+  
+  index <- sample(1:n, size = n, replace = TRUE)  # randomly select some indices
+                                                  # with replace so that one number can appear twice/more
+ 
+  lsat <- law$LSAT[index]    # now that we have the indices, we will subset each column
+  gpa <- law$GPA[index]
+  
+  results[i] <- cor(lsat, gpa)
+}
+
+sd(results)  # the standard error
+```
+
+When looking at the sample of 15, we get a standard error of about 0.13.
+
+### Aside: Using Package Boot
+
+The loop I wrote above (I think) gives a fairly clear picture of what is happening in the bootstrap process: We randomly sample from the given sample with replacement and calculate the desired sample statistic each time. We record each of these results, and then calculate the standard error (or some other statistic.)
+
+In practice, bootstrapping is often performed using the `boot` package. The primary function in `boot` is `boot()`, which requires three arguments: the data, a function for the statistic, and the number of replicates.
+
+The trickiest part to get used to is writing the functions that calculate the desired statistic. These functions always have two arguments: the data and the indices. The way the `boot()` function works is that it counts how many rows are in the data, and randomly samples with replacement from 1:n. It then uses those indices to subset the data to calculate the desired statistic.
+
+In our case, we want to find the correlation. So we will write our function to do so like this:
+
+```{r}
+cor_func <- function(data, index){  #the "data" here will refer to the dataset "law" later on in the boot 
+  d <- data[index, ]
+  lsat <- d$LSAT
+  gpa <- d$GPA
+  cor(lsat, gpa)
+}
+```
+
+Or more concisely...
+
+```{r}
+cor_func <- function(data, index){
+  cor(data[index, 1], data[index, 2])
+}
+```
+
+We then use the above function in `boot()` as follows:
+
+```{r}
+library(boot)
+results <- boot(law, cor_func, 500)
+sd(results$t)
+```
+
+### Running bootstrap on the other random samples
+
+We can attempt this with the other random samples that we took from the population.
+
+```{r}
+results1 <- boot(law_samp1, cor_func, 500)
+sd(results1$t)
+
+results2 <- boot(law_samp2, cor_func, 500)
+sd(results2$t)
+
+results10 <- boot(law_samp10, cor_func, 500)
+sd(results10$t)
+```
+
+The SE estimate from samp1 is about 0.03, for samp2 it's about 0.15, and for samp10 it's about 0.06.
+
+So our estimates of the standard error also seem to exhibit a wide amount of variation depending on the properties of the sample that acted as our pseudo-population.
+
+So how good is the bootstrap at estimating these quantities?
+
+If the population is assumed to be normally distributed, then the correlation between x and y should have a standard error of:
+
+$$\frac{(1 - \rho^2)}{\sqrt{n - 1}}$$
+
+Our population (`law82`) has a correlation of 0.76. So our standard error for samples of size 15 should be about `r (1 - .76^2)/sqrt(14)`.
+
+We can perform a bootstrap meta-study to see the performance of our bootstrap estimates.
+
+### Bootstrap meta-study
+
+In this meta study, we will perform the bootstrap many times. Each time, we will take a new sample of 15 from the population, and use that to create a bootstrap estimate of the standard error.
+
+```{r}
+# warning, this code chunk takes a while to run
+SE_estimates <- rep(NA, 1000)
+for(i in 1:1000){
+  set.seed(i)
+  law_samp <- law82[sample(1:82,15), 2:3]
+  results <- boot(law_samp, cor_func, 500)
+  SE_estimates[i] <- sd(results$t)
+}
+summary(SE_estimates)
+plot(density(SE_estimates))
+```
+
+What we see is that the bootstrap should "get it right" in the long run, because in the long-run, random sampling produces samples that should be representative of the population. This is truly the central premise behind bootstrap. Bootstrap usually works because random sampling usually works.
+
+However, when you have just one sample, you don't know if it really is representative of the population or not. It might be. It might not be. 
+
+We saw that when we used set.seed(1), the sample wasn't very representative in that the correlation was unusually high, and thus our SE estimate was unusually low.
+
+## Exercises for you
+
+I'm 'assigning' just a few exercises for you.
+
+You don't have to turn anything in. Everyone will get 100% on this assignment.
+
+Be sure you do the reading.
+
+1. Perform your own meta-study with bootstrap. 
+
+```{r}
+x <- c(rep(1,700),rep(0,300))
+y <- c(rep(1,600),rep(0,400))
+dat <- data.frame(z = c(x,y), group = rep(c("x","y"), each = 1000))
+table(dat)
+
+```
+
+  a. Here, we have generated a population. The population consists of two groups - x which has a proportion of 70%, and y which has a proportion of 60%. 
+  b. We will test how good bootstrap is at helping us detect a difference between population proportions.
+  c. Set a seed and take a random sample from the population. This will serve as your sample. Make sure that half of your random sample is x and half are y. Calculate the observed difference between the proportions of x and y.
+  
+The null hypothesis is 
+  
+  $$H_0: p_1 = p_2$$
+  
+  Because we see the populations, we know that the null hypothesis is wrong. We know that $p_1 = 0.7$ and $p_2 = 0.6$. However, because of random sampling, we may get different results. 
+  
+  We will take a random sample of 100 from population 1, and a random sample of 100 from population 2.
+  
+```{r}
+set.seed(1)
+sample1 <- sample(x, 100)
+sample2 <- sample(y, 100)
+p_hat1 <- mean(sample1)
+p_hat1
+p_hat2 <- mean(sample2)
+p_hat2
+obs_dif <- p_hat1 - p_hat2
+obs_dif
+```
+  
+We observe a difference of 0.11 points between the proportions of sample1 and sample2. Is this difference significant? We'll perform bootstrap to answer this question.  
+
+  d. Perform bootstrap resampling on your sample. With each bootstrap iteration, the statistic you want to calculate is the difference between proportions. At the end of each bootstrap, you will want to get an approximate p-value.
+  
+```{r}
+# we combine the observations from both samples into a single pool,
+# which will serve as our data in bootstrap
+pool <- c(sample1, sample2) 
+
+# our difference function will return the difference between proportions after
+# we resample our data.
+dif_fun <- function(data, index){
+  d <- data[index] # d is the resampled data.
+  group1 <- d[1:100] # We put the first 100 into group1
+  group2 <- d[101:200] # the other values go into group2
+  dif <- mean(group1) - mean(group2) # we calculate the difference between proportions
+  dif
+}
+
+library(boot)
+results <- boot(pool, dif_fun, 500)
+mean(abs(results$t) >= abs(obs_dif)) # p-value for a two-sided test
+```
+
+  e. Repeat steps c and d about 1000 times. Get an estimate of the distribution of p-values.
+  
+```{r}
+# the meta study, what kind of p-values will we get for different random samples?
+pvals <- rep(NA, 1000)
+for(i in 1:1000){
+  set.seed(i)
+  sample1 <- sample(x, 100)
+  sample2 <- sample(y, 100)
+  p_hat1 <- mean(sample1)
+  p_hat2 <- mean(sample2)
+  obs_dif <- p_hat1 - p_hat2
+  results <- boot(pool, dif_fun, 1000)
+  pvals[i] <- mean(abs(results$t) >= abs(obs_dif))
+}
+
+summary(pvals) # the average pvalue for our different tests when we took samples of 100, was about 0.14
+hist(pvals, breaks = 25)
+mean(pvals < 0.05)  # we see that our p-value is less than 0.05 only about 0.289 of the time. 
+# our test has a power (prob of correctly rejecting the null hypothesis) of only 0.289.
+
+# We can try the test again with larger samples to see if the power increases.
+```
+
+
+2. _Comparing Groups, Chapter 6, Exercise 6.1_
+
+If we read the description of the data in chapter 6, we see that the students who participated in the after school program were randomly assigned treatments. Thus, it is appropriate to perform a randomization test.
+
+```{r}
+# exploratory analysis
+
+library(readr)
+as <- read_csv("Stats 102A/hw/AfterSchool.csv")
+names(as)
+head(as)
+
+boxplot(as$Victim ~ as$Treatment)
+
+library(ggplot2)
+ggplot(as, aes(Victim, fill = factor(Treatment))) + 
+  geom_density(alpha = 0.5) + xlim(35, 90)
+
+sum(as$Treatment == 0) # 187 are not in afterschool programs
+sum(as$Treatment == 1) # 169 are in afterschool programs
+
+vic_0 <- mean(as$Victim[as$Treatment == 0]) # mean victim score for treatment == 0
+vic_0
+vic_1 <- mean(as$Victim[as$Treatment == 1]) # mean victim score for treatment == 1
+vic_1/
+obs_dif <- vic_0 - vic_1 # difference between victim scores
+obs_dif
+```
+
+We observe a difference of about 1.3 points in victimization measures. Those who are in the after school program (treatment = 1), have, on average, a victimization score of 1.3 points lower than those who do not. A density plot comparison shows similar shapes, but the distribution of victim scores for the students who are not in the after-school program seems to have a longer right tail.
+
+We perform a randomization test to see if this difference is statistically significant.
+
+The null hypothesis is that the mean score is the same for both groups. If the null hypothesis were true, then there is no relationship between scores and treatments. We can thus shuffle the values and divide them into two random groups that are the same size as our samples (187 and 169). We will then calculate the mean of each group and the find the differences between the two means.
+
+We will calculate our p-value by seeing how often our randomized differences is greater than the observed difference. We will conduct a one-sided test because the assumption is that the students who are not in the after-school program (treatment = 0) will have a higher victimization score than those who are in the after-school program.
+
+```{r}
+# Code for the randomization test
+
+rand_dif <- rep(NA, 1000)
+
+for(i in 1:1000){
+  shuffled <- sample(as$Victim)
+  rand_group1 <- mean(shuffled[1:187])
+  rand_group2 <- mean(shuffled[188:356])
+  rand_dif[i] <- rand_group1 - rand_group2
+}
+
+mean(rand_dif > obs_dif) # we perform a one sided test. 
+```
+
+Our p-value is 0.11. This indicates to us that the difference of 1.3 points could have been a result of random chance.
+
+3. _Comparing Groups, Chapter 7, Exercise 7.1_
+
+```{r}
+library(readr)
+hsb <- read_csv("Stats 102A/hw/HSB.csv")
+View(hsb)
+head(hsb) # Schtyp 0 is private, 1 is public
+sum(hsb$Schtyp == 0) # 32 observations from private school
+sum(hsb$Schtyp == 1) # 168 observations from public school
+
+var(hsb$Sci[hsb$Schtyp == 0]) # variance of sciences scores for private
+var(hsb$Sci[hsb$Schtyp == 1]) # variance of sciences scores for public
+obs_dif = var(hsb$Sci[hsb$Schtyp == 0]) - var(hsb$Sci[hsb$Schtyp == 1])
+obs_dif
+```
+
+We see there is a difference between the two variances. Is that difference statistically significant?
+
+We can perform bootstrap tests to see.
+
+Here is code to perform a bootstrap hypothesis test with library(boot).
+
+```{r}
+# bootstrap hypothesis test using library boot
+library(boot)
+
+# the var_dif is the function used to calculate the difference between the two group variances
+var_dif <- function(data, index){
+  d <- data[index]
+  g1 <- d[1:32]    # put 32 in group1
+  g2 <- d[33:200]  # put the rest in group 2
+  var(g1) - var(g2) # difference between variances. This is the last line, so this is the returned result.
+}
+
+# we use function boot() to create our results. 
+# The arguments are the data values, the function for the statistic, and how many repetitions
+results <- boot(hsb$Sci, var_dif, 5000) 
+
+# to calculate our p-value, we see how often our bootstrapped differences are greater than the observed difference.
+# we do a two-sided test, so we need to use absolute values.
+mean(abs(results$t) >= abs(obs_dif))
+
+```
+
+```{r}
+# bootstrap hypothesis test using sample()
+boot_dif <- rep(NA, 5000)
+
+# similar, but a little different
+# we store the differences between variances in the vector boot_dif
+for(i in 1:5000){
+  index <- sample(1:200, 200, replace = TRUE)
+  d <- hsb$Sci[index]
+  g1 <- d[1:32]    # put 32 in group1
+  g2 <- d[33:200]  # put the rest in group 2
+  boot_dif[i] <- var(g1) - var(g2) # difference between variances
+}
+
+
+# we calculate our p-value
+mean(abs(boot_dif) >= abs(obs_dif))
+```
+
+## Randomization Test Practice
+
+
+## Mythbuster Yawning Randomization Test
+
+Null Hypothesis: yawning is not contagious. The results we see were just a result of random chance.
+
+If the null hypothesis is true, then we are saying that 14 people were 'destined' to yawn anyway. The fact that we observed 29% yawn in one group and only 25% yawn in the other group is merely a result of the random assignment.
+
+We create the data in R.
+
+```{r}
+yawning <- c( rep(TRUE, 10), rep(FALSE, 24), rep(TRUE, 4), rep(FALSE, 12))
+seed_yawn <- yawning[1:34]
+no_seed_yawn <- yawning[35:50]
+mean(seed_yawn)    # 29% in the seed yawn group actually yawn
+mean(no_seed_yawn) # 25% in the no seed group still yawn
+obs_dif <- mean(seed_yawn) - mean(no_seed_yawn) # there is a 4.4% point difference
+obs_dif
+```
+
+## Randomize
+
+```{r}
+set.seed(11)
+randomized <- sample(yawning) # mix up the yawning results
+groupA <- randomized[1:34] # put the first 34 in group A
+groupB <- randomized[35:50] # put the remaining 16 in the other group
+# because these are just randomized and sorted, we know that groupA and groupB 
+# have nothing to do with whether someone yawns or not
+mean(groupA)
+mean(groupB)
+rand_dif <- mean(groupA) - mean(groupB) 
+rand_dif
+# even though the results are from random chance alone, we still observe a difference
+# of 22.7% points between the two group proportions
+```
+
+## Many times
+
+```{r}
+differences <- rep(NA, 5000)
+
+for(i in 1:5000){
+  randomized <- sample(yawning)
+  groupA <- randomized[1:34]
+  groupB <- randomized[35:50]
+  differences[i] <- mean(groupA) - mean(groupB)
+}
+
+summary(differences)
+```
+
+## Empirical p-value
+
+What is the probability of observing a difference as large as our data's difference?
+
+```{r}
+obs_dif
+
+mean(differences >= obs_dif)  # one sided test
+# seeded yawn group is more likely to yawn
+# From randomization, we got differences of 4.4 points over half the time
+# Our randomization test shows that the results of yawning and whether they were
+# in the seed yawn group is hardly any different from our results where
+# random assignment was the only source of variation.
+
+mean(abs(differences) >= obs_dif)  # two sided test
+# every single difference we obtained via randomization was at
+
+```
+
+It seems like there is reasonable to think that the difference the mythbusters observed is a result of random chance alone.
